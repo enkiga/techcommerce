@@ -1,7 +1,7 @@
-const { signUpSchema } = require("../middlewares/validator");
-
+const { signUpSchema, signInSchema } = require("../middlewares/validator");
+const jwt = require("jsonwebtoken");
 const User = require("../models/userModel");
-const { doHash } = require("../utils/hashing");
+const { doHash, doHashValidation } = require("../utils/hashing");
 
 exports.signup = async (req, res) => {
   const { email, password, name } = req.body;
@@ -45,4 +45,72 @@ exports.signup = async (req, res) => {
   } catch (error) {
     console.log("Authentication error", error);
   }
+};
+
+exports.signin = async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    const { error, value } = signInSchema.validate({ email, password });
+
+    if (error) {
+      return res.status(401).json({
+        success: false,
+        message: error.details[0].message,
+      });
+    }
+
+    // Query DB
+    const existingUser = await User.findOne({ email }).select("+password");
+
+    if (!existingUser) {
+      return res.status(401).json({
+        success: false,
+        message: "User does not exist!",
+      });
+    }
+
+    // Password comparison
+    const result = await doHashValidation(password, existingUser.password);
+
+    if (!result) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials!",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        userId: existingUser._id,
+        email: existingUser.email,
+        name: existingUser.name,
+      },
+      process.env.TOKEN_SECRET,
+      {
+        expiresIn: "8h",
+      }
+    );
+
+    res
+      .cookie("Authorization", "Bearer" + token, {
+        expires: new Date(Date.now() + 8 * 3600000),
+        httpOnly: process.env.NODE_ENV === "production",
+        secure: process.env.NODE_ENV === "production",
+      })
+      .json({
+        success: true,
+        token,
+        message: "Logged in successfully",
+      });
+  } catch (error) {
+    console.log("Sign In Error", error);
+  }
+};
+
+exports.signout = async (req, res) => {
+  res
+    .clearCookie("Authorization")
+    .status(200)
+    .json({ success: true, message: "Logged out successfully" });
 };
